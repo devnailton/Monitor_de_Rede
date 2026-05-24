@@ -1,6 +1,6 @@
 @echo off
 setlocal
-cd /d "d:\AAAPortfolio_Github\Monitoramento de Rede"
+cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" (
     echo [setup] Criando ambiente virtual...
