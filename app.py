@@ -1,6 +1,8 @@
 import json
+import time
 from datetime import datetime, timedelta
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -177,6 +179,9 @@ if not snapshot and not history:
 else:
     over_threshold = {}
 
+    if "alert_ts" not in st.session_state:
+        st.session_state.alert_ts = {}
+
     def render_device(name: str, samples, height: int) -> None:
         latest = next((v for _, v in reversed(samples) if v is not None), None)
         window_samples = history.get(name, [])
@@ -184,15 +189,40 @@ else:
         lost = sum(1 for _, v in window_samples if v is None)
         loss_pct = (lost / total * 100) if total else 0.0
         label = f"⭐ {name}" if name in primaries else name
+        delta_text = f"perda {loss_pct:.1f}%" if loss_pct > 0 else "perda 0%"
+        delta_color = "inverse" if loss_pct > 0 else "off"
+
+        if latest is not None and latest > alert_threshold:
+            st.session_state.alert_ts[name] = time.time()
+            over_threshold[name] = latest
+
+        alert_active = (
+            name in st.session_state.alert_ts
+            and (time.time() - st.session_state.alert_ts[name]) < 3
+        )
+
         if latest is None:
-            st.metric(label, "—", f"perda {loss_pct:.0f}%")
+            st.metric(label, "—", delta_text, delta_color=delta_color)
         else:
-            st.metric(label, f"{latest:.1f} ms", f"perda {loss_pct:.0f}%")
-            if latest > alert_threshold:
-                over_threshold[name] = latest
+            st.metric(label, f"{latest:.1f} ms", delta_text, delta_color=delta_color)
+
         if window_samples:
-            df = pd.DataFrame(window_samples, columns=["timestamp", name]).set_index("timestamp")
-            st.line_chart(df, height=height)
+            df = pd.DataFrame(window_samples, columns=["timestamp", "latency"]).dropna()
+            line_color = "#ff3333" if alert_active else "#1f77b4"
+            stroke_width = 3 if alert_active else 2
+            background = "#3a0d0d" if alert_active else None
+            line = (
+                alt.Chart(df)
+                .mark_line(color=line_color, strokeWidth=stroke_width)
+                .encode(
+                    x=alt.X("timestamp:T", title=None),
+                    y=alt.Y("latency:Q", title="ms"),
+                )
+            )
+            chart = line.properties(height=height)
+            if background:
+                chart = chart.configure_view(fill=background)
+            st.altair_chart(chart, use_container_width=True)
         else:
             st.caption("Sem dados na janela selecionada ainda.")
 
@@ -220,9 +250,21 @@ else:
         if sound_on:
             st.html(
                 """
-                <audio autoplay>
-                  <source src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" type="audio/ogg">
-                </audio>
+                <audio id="alert-beep" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"></audio>
+                <script>
+                  (function() {
+                    var audio = document.getElementById('alert-beep');
+                    if (!audio) return;
+                    var count = 0;
+                    function play() {
+                      audio.currentTime = 0;
+                      audio.play().catch(function(){});
+                      count++;
+                      if (count < 5) setTimeout(play, 600);
+                    }
+                    play();
+                  })();
+                </script>
                 """
             )
 
